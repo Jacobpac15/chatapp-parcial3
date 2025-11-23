@@ -1,23 +1,7 @@
+# docker-compose.yml
 version: "3.9"
 
 services:
-
-  api-gateway:
-    build: ./api-gateway
-    ports:
-      - "3000:3000"
-    depends_on:
-      - postgres
-    command: ["node", "app.js"]
-
-  websocket-server:
-    build: ./websocket-server
-    ports:
-      - "4000:4000"
-    depends_on:
-      - rabbitmq
-    command: ["node", "server.js"]
-
   postgres:
     image: postgres:15
     environment:
@@ -27,6 +11,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
+      - postgres_data:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
 
   rabbitmq:
@@ -34,6 +19,21 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+
+  websocket-server:
+    build: ./websocket-server
+    ports:
+      - "4000:4000"
+    depends_on:
+      - postgres
+      - rabbitmq
+
+volumes:
+  postgres_data:

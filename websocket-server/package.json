@@ -1,19 +1,9 @@
 {
-  "name": "websocket-server",
-  "version": "1.0.0",
-  "description": "",
-  "main": "server.js",
   "type": "module",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "amqplib": "^0.10.3",
+    "ws": "^8.14.2",
     "jsonwebtoken": "^9.0.2",
-    "pg": "^8.16.3",
-    "ws": "^8.15.1"
+    "amqplib": "^0.10.3",
+    "pg": "^8.11.0"
   }
 }

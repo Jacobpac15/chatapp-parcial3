@@ -1,636 +1,157 @@
 <!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Chat Multiusuario</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 20px;
-      background: #f4f4f4;
-      color: #222;
+<html><head><meta charset="utf-8"><title>Chat Parcial III - 100% FUNCIONAL</title><style>
+  body{font-family:Arial;background:#111;color:#fff;margin:0;padding:20px;}
+  .card{background:#222;padding:20px;border-radius:12px;margin:20px auto;max-width:800px;}
+  input,button{width:100%;padding:12px;margin:8px 0;border:none;border-radius:8px;}
+  input{background:#333;color:white;}
+  button{background:#00bfff;color:white;font-weight:bold;cursor:pointer;}
+  .room{background:#333;padding:15px;margin:10px 0;border-radius:10px;cursor:pointer;}
+  .room:hover{background:#444;}
+  #messages{height:500px;overflow-y:auto;background:#000;padding:15px;border-radius:10px;margin:10px 0;}
+  .msg{margin:8px 0;padding:10px;background:#333;border-radius:8px;}
+  .system{color:#0f0;font-style:italic;}
+</style></head><body>
+
+<div id="login" class="card">
+  <h1>ChatApp - Parcial III</h1>
+  <input id="username" placeholder="Usuario">
+  <input id="password" type="password" placeholder="Contraseña">
+  <button onclick="login()">Iniciar Sesión</button>
+  <button onclick="register()">Registrarse</button>
+</div>
+
+<div id="app" class="card" style="display:none">
+  <h2>Bienvenido, <span id="currentUser"></span> <button onclick="logout()">Salir</button></h2>
+  <button onclick="createRoom()">Crear Sala Nueva</button>
+  <h3>Salas disponibles:</h3>
+  <div id="roomList"></div>
+
+  <div id="chat" style="display:none;margin-top:20px;">
+    <h3>Chat en sala: <span id="currentRoom"></span> <button onclick="leaveRoom()">Salir</button></h3>
+    <div id="messages"></div>
+    <input id="messageInput" placeholder="Escribe un mensaje..." onkeypress="if(event.key==='Enter')sendMessage()">
+    <button onclick="sendMessage()">Enviar</button>
+  </div>
+</div>
+
+<script>
+const API = "http://localhost:3000";
+let token = null, currentUser = null, ws = null, currentRoomId = null;
+
+async function login() {
+  const u = document.getElementById("username").value.trim();
+  const p = document.getElementById("password").value;
+  await auth("/auth/login", u, p);
+}
+
+async function register() {
+  const u = prompt("Nuevo usuario:");
+  const p = prompt("Contraseña:");
+  if (u && p) await auth("/auth/register", u, p);
+}
+
+async function auth(endpoint, username, password) {
+  const res = await fetch(API + endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+  const data = await res.json();
+  if (data.token) {
+    token = data.token;
+    currentUser = data.user.username;
+    document.getElementById("login").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    document.getElementById("currentUser").textContent = currentUser;
+    loadRooms();
+  } else {
+    alert(data.error || "Error de autenticación");
+  }
+}
+
+function logout() {
+  token = currentUser = null;
+  if (ws) ws.close();
+  document.getElementById("app").style.display = "none";
+  document.getElementById("login").style.display = "block";
+}
+
+async function loadRooms() {
+  const res = await fetch(API + "/rooms");
+  const rooms = await res.json();
+  const list = document.getElementById("roomList");
+  list.innerHTML = "";
+  rooms.forEach(r => {
+    const div = document.createElement("div");
+    div.className = "room";
+    div.innerHTML = `<strong>${r.name}</strong> ${r.is_private ? "(Privada)" : ""}`;
+    div.onclick = () => joinRoom(r.id, r.is_private);
+    list.appendChild(div);
+  });
+}
+
+function createRoom() {
+  const name = prompt("Nombre de la sala:");
+  if (!name) return;
+  const isPrivate = confirm("¿Sala privada?");
+  const password = isPrivate ? prompt("Código de acceso:") : "";
+  
+  fetch(API + "/rooms", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, isPrivate, password })
+  }).then(() => loadRooms());
+}
+
+function joinRoom(roomId, isPrivate) {
+  const code = isPrivate ? prompt("Código de la sala:") : "";
+  if (ws) ws.close();
+
+  ws = new WebSocket(`ws://localhost:4000?token=${token}`);
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "join", roomId: Number(roomId), accessCode: code }));
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    const messagesDiv = document.getElementById("messages");
+
+    if (msg.type === "joined") {
+      currentRoomId = roomId;
+      document.getElementById("currentRoom").textContent = msg.name || roomId;
+      document.getElementById("chat").style.display = "block";
+      messagesDiv.innerHTML = "<div class='system'>Te has unido a la sala</div>";
     }
-    h1 {
-      margin-bottom: 10px;
+    if (msg.type === "message") {
+      messagesDiv.innerHTML += `<div class='msg'><strong>${msg.username}:</strong> ${msg.content}</div>`;
     }
-    #new-session {
-      background: #fff;
-      padding: 15px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+    if (msg.type === "notification") {
+      messagesDiv.innerHTML += `<div class='system'>${msg.message}</div>`;
     }
-    #sessions {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-      gap: 16px;
+    if (msg.type === "error") {
+      alert("Error: " + msg.message);
     }
-    .session-card {
-      background: #fff;
-      border-radius: 10px;
-      padding: 15px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .session-card header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid #ddd;
-      padding-bottom: 8px;
-    }
-    .session-status {
-      font-size: 0.9rem;
-      font-weight: bold;
-      color: #777;
-    }
-    .session-actions,
-    .inline-form,
-    .history-controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      align-items: center;
-    }
-    .section {
-      border-top: 1px solid #eee;
-      padding-top: 10px;
-    }
-    input,
-    button,
-    select {
-      padding: 6px 10px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      font-size: 0.9rem;
-    }
-    button {
-      cursor: pointer;
-      background: #0c7;
-      color: #fff;
-      border: none;
-    }
-    button.secondary {
-      background: #0a84ff;
-    }
-    button.danger {
-      background: #f45;
-    }
-    button:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    ul.rooms-list {
-      list-style: none;
-      padding: 0;
-      margin: 6px 0;
-      max-height: 120px;
-      overflow: auto;
-    }
-    ul.rooms-list li {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 4px 0;
-      border-bottom: 1px solid #eee;
-      font-size: 0.9rem;
-    }
-    pre {
-      background: #f7f7f7;
-      padding: 10px;
-      border-radius: 6px;
-      height: 120px;
-      overflow: auto;
-      font-size: 0.85rem;
-    }
-    .history-log {
-      height: 150px;
-    }
-    label {
-      font-size: 0.85rem;
-    }
-  </style>
-</head>
-<body>
-  <h1>Simulador multiusuario (estilo WhatsApp)</h1>
-  <p>Usa este panel para crear varias sesiones de usuario y probar conversaciones simultáneas sin abrir varias pestañas.</p>
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  };
+}
 
-  <section id="new-session">
-    <h3>Crear nueva sesión</h3>
-    <div class="inline-form">
-      <input id="newSessionName" placeholder="Nombre de usuario (ej: juan)" />
-      <button id="createSessionBtn">Añadir sesión</button>
-      <button id="createPairBtn" class="secondary">Añadir par demo (Ana & Carlos)</button>
-    </div>
-  </section>
+function sendMessage() {
+  const input = document.getElementById("messageInput");
+  if (input.value.trim() && ws && currentRoomId) {
+    ws.send(JSON.stringify({
+      type: "message",
+      roomId: Number(currentRoomId),
+      content: input.value.trim()
+    }));
+    input.value = "";
+  }
+}
 
-  <div id="sessions"></div>
-
-  <template id="session-template">
-    <div class="session-card">
-      <header>
-        <div>
-          <div><strong data-field="username"></strong> <small data-field="userMeta"></small></div>
-          <div class="session-status" data-field="status">WS desconectado</div>
-        </div>
-        <div class="session-actions">
-          <button data-action="connect">Conectar WS</button>
-          <button data-action="disconnect" class="secondary">Desconectar</button>
-          <button data-action="remove" class="danger">Eliminar</button>
-        </div>
-      </header>
-
-      <div class="section">
-        <h4>Salas disponibles</h4>
-        <div class="inline-form" style="justify-content: space-between; width: 100%;">
-          <button data-action="loadRooms">Actualizar salas</button>
-          <small>Las salas privadas se marcan como [Privada] y solicitaran codigo al unirse.</small>
-        </div>
-        <ul class="rooms-list" data-field="roomsList"></ul>
-        <div class="inline-form">
-          <input data-field="roomName" placeholder="Nombre de sala" style="flex:1;" />
-          <label><input type="checkbox" data-field="roomPrivate"> Privada</label>
-          <input data-field="roomCode" placeholder="Codigo privado" style="width:140px;">
-          <button data-action="createRoom">Crear</button>
-        </div>
-      </div>
-
-      <div class="section">
-        <h4>Sala activa e historial</h4>
-        <div class="history-controls">
-          <div>Sala actual: <strong data-field="currentRoom">-</strong></div>
-          <div>
-            <button data-action="historyPrev">&lt;</button>
-            <button data-action="historyNext">&gt;</button>
-            <span data-field="historyMeta"></span>
-          </div>
-        </div>
-        <pre data-field="history" class="history-log"></pre>
-      </div>
-
-      <div class="section">
-        <h4>Enviar mensaje</h4>
-        <div class="inline-form">
-          <input data-field="messageInput" placeholder="Mensaje" style="flex:1;">
-          <button data-action="sendMessage">Enviar</button>
-        </div>
-      </div>
-
-      <div class="section">
-        <h4>Eventos y notificaciones</h4>
-        <pre data-field="log" class="event-log"></pre>
-      </div>
-    </div>
-  </template>
-
-  <script>
-    const API_BASE = "http://localhost:3000";
-    const sessions = new Map();
-    let sessionCounter = 1;
-
-    const sessionTemplate = document.getElementById("session-template");
-    const sessionsContainer = document.getElementById("sessions");
-    const newSessionInput = document.getElementById("newSessionName");
-
-    document.getElementById("createSessionBtn").addEventListener("click", () => {
-      const username = newSessionInput.value.trim();
-      if (!username) {
-        alert("Debes indicar un nombre.");
-        return;
-      }
-      createSession(username);
-      newSessionInput.value = "";
-    });
-
-    document.getElementById("createPairBtn").addEventListener("click", async () => {
-      await createSession("ana_demo");
-      await createSession("carlos_demo");
-    });
-
-    newSessionInput.addEventListener("keydown", (evt) => {
-      if (evt.key === "Enter") {
-        document.getElementById("createSessionBtn").click();
-      }
-    });
-
-    async function createSession(username) {
-      try {
-        const res = await fetch(`${API_BASE}/auth/login`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username })
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          alert(data.error || "No se pudo crear la sesión");
-          return;
-        }
-
-        const session = {
-          id: sessionCounter++,
-          username: data.user.username,
-          user: data.user,
-          token: data.token,
-          socket: null,
-          joinedRooms: new Set(),
-          roomAccessCodes: new Map(),
-          currentRoomId: null,
-          currentHistoryPage: 1,
-          els: {}
-        };
-
-        renderSession(session);
-        sessions.set(session.id, session);
-      appendLog(session, "Sesion creada. Usa el boton de conectar para escuchar en tiempo real.");
-      loadRooms(session);
-      } catch (error) {
-        console.error("Error creando sesión:", error);
-        alert("Hubo un problema creando la sesión.");
-      }
-    }
-
-    function renderSession(session) {
-      const fragment = sessionTemplate.content.cloneNode(true);
-      const root = fragment.querySelector(".session-card");
-      sessionsContainer.appendChild(root);
-
-      session.els = {
-        root,
-        status: root.querySelector("[data-field='status']"),
-        usernameLabel: root.querySelector("[data-field='username']"),
-        userMeta: root.querySelector("[data-field='userMeta']"),
-        roomsList: root.querySelector("[data-field='roomsList']"),
-        roomName: root.querySelector("[data-field='roomName']"),
-        roomPrivate: root.querySelector("[data-field='roomPrivate']"),
-        roomCode: root.querySelector("[data-field='roomCode']"),
-        currentRoom: root.querySelector("[data-field='currentRoom']"),
-        history: root.querySelector("[data-field='history']"),
-        historyMeta: root.querySelector("[data-field='historyMeta']"),
-        messageInput: root.querySelector("[data-field='messageInput']"),
-        log: root.querySelector("[data-field='log']")
-      };
-
-      session.els.usernameLabel.textContent = session.username;
-      session.els.userMeta.textContent = `ID ${session.user.id} | sesion #${session.id}`;
-      updateStatus(session, "WS desconectado", "#777");
-      updateCurrentRoom(session);
-
-      root.querySelector("[data-action='connect']").addEventListener("click", () =>
-        connectSession(session)
-      );
-      root.querySelector("[data-action='disconnect']").addEventListener("click", () =>
-        disconnectSession(session)
-      );
-      root.querySelector("[data-action='remove']").addEventListener("click", () =>
-        removeSession(session)
-      );
-      root.querySelector("[data-action='loadRooms']").addEventListener("click", () =>
-        loadRooms(session)
-      );
-      root.querySelector("[data-action='createRoom']").addEventListener("click", () =>
-        createRoom(session)
-      );
-      root.querySelector("[data-action='historyPrev']").addEventListener("click", () =>
-        changeHistoryPage(session, -1)
-      );
-      root.querySelector("[data-action='historyNext']").addEventListener("click", () =>
-        changeHistoryPage(session, 1)
-      );
-      root.querySelector("[data-action='sendMessage']").addEventListener("click", () =>
-        sendMessage(session)
-      );
-    }
-
-    function updateStatus(session, text, color = "#0a0") {
-      session.els.status.textContent = text;
-      session.els.status.style.color = color;
-    }
-
-    function authFetch(session, path, options = {}) {
-      const headers = Object.assign({}, options.headers, {
-        Authorization: `Bearer ${session.token}`
-      });
-      return fetch(`${API_BASE}${path}`, Object.assign({}, options, { headers }));
-    }
-
-    async function authRequest(session, path, options = {}) {
-      const res = await authFetch(session, path, options);
-      let data = null;
-      try {
-        data = await res.json();
-      } catch (error) {
-        data = null;
-      }
-      return { ok: res.ok, status: res.status, data };
-    }
-
-    function appendLog(session, text) {
-      const line = `[${new Date().toLocaleTimeString()}] ${text}`;
-      session.els.log.textContent += line + "\n";
-      session.els.log.scrollTop = session.els.log.scrollHeight;
-    }
-
-    function updateCurrentRoom(session) {
-      session.els.currentRoom.textContent = session.currentRoomId ?? "-";
-    }
-
-    async function loadRooms(session) {
-      const { ok, data } = await authRequest(session, "/rooms/discover");
-      if (!ok) {
-        appendLog(session, `[Rooms] No se pudieron cargar: ${data?.error || "error"}`);
-        return;
-      }
-
-      session.rooms = data;
-      session.els.roomsList.innerHTML = "";
-
-      if (!data.length) {
-        const li = document.createElement("li");
-        li.textContent = "No hay salas disponibles.";
-        session.els.roomsList.appendChild(li);
-      } else {
-        data.forEach((room) => {
-          const li = document.createElement("li");
-          const label = document.createElement("span");
-          label.textContent = `${room.name} (#${room.id}) ${
-            room.is_private ? "[Privada]" : "Publica"
-          }${room.is_member ? " - Ya unido" : ""}`;
-          const btn = document.createElement("button");
-          btn.textContent = room.is_member ? "Entrar" : "Unirse";
-          btn.addEventListener("click", () => joinRoom(session, room));
-          li.append(label, btn);
-          session.els.roomsList.appendChild(li);
-        });
-      }
-
-      appendLog(session, `[Rooms] ${data.length} salas visibles.`);
-    }
-
-    async function createRoom(session) {
-      const name = session.els.roomName.value.trim();
-      const isPrivate = session.els.roomPrivate.checked;
-      const code = session.els.roomCode.value.trim();
-
-      if (!name) {
-        alert("Nombre requerido.");
-        return;
-      }
-      if (isPrivate && !code) {
-        alert("Las salas privadas necesitan un codigo.");
-        return;
-      }
-
-      const payload = {
-        name,
-        isPrivate,
-        accessCode: isPrivate ? code : undefined
-      };
-
-      const { ok, data } = await authRequest(session, "/rooms", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (!ok) {
-        appendLog(session, `[Rooms] Error creando sala: ${data?.error || "error"}`);
-        return;
-      }
-
-      session.els.roomName.value = "";
-      session.els.roomPrivate.checked = false;
-      session.els.roomCode.value = "";
-      appendLog(session, `[Rooms] Creada sala #${data.id} (${data.name}).`);
-      loadRooms(session);
-    }
-
-    async function joinRoom(session, room) {
-      if (!room || !room.id) {
-        return;
-      }
-
-      let accessCode = session.roomAccessCodes.get(room.id) || null;
-
-      if (room.is_private && !room.is_member && !accessCode) {
-        const answer = prompt(`Codigo de acceso para "${room.name}" (#${room.id})`);
-        if (answer === null) {
-          return;
-        }
-        accessCode = answer.trim();
-        if (!accessCode) {
-          alert("El codigo es obligatorio para salas privadas.");
-          return;
-        }
-      }
-
-      if (!room.is_member) {
-        const payload = { accessCode: accessCode || undefined };
-        const { ok, data } = await authRequest(session, `/rooms/${room.id}/join`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-
-        if (!ok) {
-          appendLog(
-            session,
-            `[Rooms] Error uniendo a sala ${room.id}: ${data?.error || "error"}`
-          );
-          return;
-        }
-
-        appendLog(session, `[Rooms] Entraste a la sala #${room.id}.`);
-        room.is_member = true;
-      } else {
-        appendLog(session, `[Rooms] Usando sala #${room.id}.`);
-      }
-
-      session.roomAccessCodes.set(room.id, accessCode || null);
-      session.joinedRooms.add(room.id);
-      session.currentRoomId = room.id;
-      session.currentHistoryPage = 1;
-      updateCurrentRoom(session);
-      await loadHistory(session, 1);
-      loadRooms(session);
-
-      if (!session.socket || session.socket.readyState !== WebSocket.OPEN) {
-        connectSession(session);
-      } else {
-        session.socket.send(
-          JSON.stringify({
-            type: "join",
-            roomId: room.id,
-            accessCode: accessCode || undefined
-          })
-        );
-      }
-    }
-
-    async function loadHistory(session, page = 1) {
-      if (!session.currentRoomId) {
-        appendLog(session, "[Historial] Selecciona una sala.");
-        return;
-      }
-      const { ok, data } = await authRequest(
-        session,
-        `/rooms/${session.currentRoomId}/messages?page=${page}&limit=20`
-      );
-
-      if (!ok) {
-        appendLog(session, `[Historial] Error: ${data?.error || "sin acceso"}`);
-        return;
-      }
-
-      session.currentHistoryPage = data.page;
-      session.els.historyMeta.textContent = `Página ${data.page} de ${data.totalPages}`;
-
-      const lines = data.data
-        .slice()
-        .reverse()
-        .map(
-          (msg) =>
-            `[${new Date(msg.timestamp).toLocaleTimeString()}] ${msg.username}: ${msg.content}`
-        );
-
-      session.els.history.textContent = lines.join("\n");
-      session.els.history.scrollTop = session.els.history.scrollHeight;
-    }
-
-    function changeHistoryPage(session, delta) {
-      if (!session.currentRoomId) {
-        alert("Primero únete a una sala.");
-        return;
-      }
-      const target = Math.max(1, (session.currentHistoryPage || 1) + delta);
-      loadHistory(session, target);
-    }
-
-    function sendMessage(session) {
-      if (!session.currentRoomId) {
-        alert("Selecciona una sala antes de enviar.");
-        return;
-      }
-      const content = session.els.messageInput.value.trim();
-      if (!content) {
-        return;
-      }
-
-      if (!session.socket || session.socket.readyState !== WebSocket.OPEN) {
-        appendLog(session, "[WS] No estás conectado. Intentando reconectar...");
-        connectSession(session);
-        return;
-      }
-
-      session.socket.send(
-        JSON.stringify({
-          type: "message",
-          roomId: session.currentRoomId,
-          content
-        })
-      );
-      session.els.messageInput.value = "";
-    }
-
-    function connectSession(session) {
-      if (session.socket && session.socket.readyState <= WebSocket.OPEN) {
-        return;
-      }
-
-      const ws = new WebSocket(`ws://localhost:4000/?token=${session.token}`);
-      session.socket = ws;
-      updateStatus(session, "Conectando...", "#fa0");
-
-      ws.onopen = () => {
-        updateStatus(session, "WS conectado", "#0a0");
-        appendLog(session, "[WS] Conectado. Reuniendo salas suscritas...");
-        session.joinedRooms.forEach((roomId) => {
-          ws.send(
-            JSON.stringify({
-              type: "join",
-              roomId,
-              accessCode: session.roomAccessCodes.get(roomId) || undefined
-            })
-          );
-        });
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          handleSocketMessage(session, payload);
-        } catch (error) {
-          appendLog(session, "[WS] Mensaje no válido recibido.");
-        }
-      };
-
-      ws.onerror = (err) => {
-        console.error("WS error", err);
-        updateStatus(session, "WS error", "#f50");
-      };
-
-      ws.onclose = () => {
-        updateStatus(session, "WS desconectado", "#777");
-        appendLog(session, "[WS] Desconectado.");
-        session.socket = null;
-      };
-    }
-
-    function disconnectSession(session) {
-      if (session.socket) {
-        session.socket.close();
-        session.socket = null;
-      }
-      updateStatus(session, "WS desconectado", "#777");
-    }
-
-    function removeSession(session) {
-      disconnectSession(session);
-      sessions.delete(session.id);
-      session.els.root.remove();
-    }
-
-    function handleSocketMessage(session, data) {
-      switch (data.type) {
-        case "connected":
-          appendLog(session, `[WS] Autenticado como ${data.user.username}`);
-          break;
-        case "room_joined":
-          session.joinedRooms.add(data.roomId);
-          appendLog(session, `[Sala ${data.roomId}] Confirmada suscripción.`);
-          break;
-        case "message":
-          appendLog(
-            session,
-            `[Sala ${data.roomId}] ${data.user?.username || "Usuario"}: ${data.content}`
-          );
-          if (session.currentRoomId === data.roomId) {
-            const line = `[${new Date(data.timestamp || Date.now()).toLocaleTimeString()}] ${
-              data.user?.username || "Usuario"
-            }: ${data.content}`;
-            session.els.history.textContent += (session.els.history.textContent ? "\n" : "") + line;
-            session.els.history.scrollTop = session.els.history.scrollHeight;
-          }
-          break;
-        case "user_joined":
-          appendLog(session, `[Sala ${data.roomId}] ${data.user.username} se unió.`);
-          break;
-        case "sent":
-          appendLog(session, `[Sala ${data.roomId}] Mensaje enviado (#${data.messageId}).`);
-          break;
-        case "error":
-          appendLog(
-            session,
-            `[Error${data.roomId ? " sala " + data.roomId : ""}] ${data.message || "Error genérico"}`
-          );
-          break;
-        default:
-          appendLog(session, `[WS] ${JSON.stringify(data)}`);
-      }
-    }
-  </script>
-</body>
-</html>
+function leaveRoom() {
+  if (ws) ws.close();
+  document.getElementById("chat").style.display = "none";
+  currentRoomId = null;
+}
+</script>
+</body></html>
