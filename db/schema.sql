@@ -30,3 +30,22 @@ CREATE TABLE messages (
 );
 
 CREATE INDEX idx_messages_room_timestamp ON messages(room_id, timestamp);
+
+-- db/schema.sql (reemplaza solo la tabla users, el resto déjalo igual)
+
+DROP TABLE IF EXISTS messages CASCADE;
+DROP TABLE IF EXISTS room_members CASCADE;
+DROP TABLE IF EXISTS rooms CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,          -- ¡NUEVO: contraseña hasheada!
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- El resto de tus tablas (rooms, messages, room_members) las dejas tal cual las tenías
+CREATE TABLE rooms ( ... );
+CREATE TABLE messages ( ... );
+CREATE TABLE room_members ( ... );
