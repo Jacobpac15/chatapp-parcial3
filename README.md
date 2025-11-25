@@ -110,3 +110,68 @@ CREATE TABLE messages (
     content TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
 );
+```
+
+# 7. Flujos de Interacción
+
+## 7.1 Conexión y Autenticación WebSocket
+
+1. El cliente obtiene un JWT mediante el endpoint de autenticación.
+2. El cliente abre la conexión WebSocket e incluye el token (query param, subprotocol o mensaje inicial).
+3. El servidor valida el JWT y asocia la conexión al `user_id`.
+4. El cliente envía un evento `join_room` para unirse a las salas deseadas.
+
+## 7.2 Enviar Mensaje
+
+1. El cliente envía un evento `message_send` por WebSocket.
+2. El servidor valida permisos e inserta el mensaje en la base de datos.
+3. El servidor publica un evento `room:{id}` en Redis Pub/Sub.
+4. Todas las instancias WebSocket envían el mensaje a los usuarios conectados en esa sala.
+5. El servidor responde al emisor con un evento de confirmación `ack`.
+
+---
+
+# 8. Escalado y Disponibilidad
+
+- Escalado horizontal de múltiples instancias del servidor WebSocket.
+- Sticky sessions opcionales (mejoran latencia, pero no son obligatorias gracias a Redis Pub/Sub).
+- Particionado por `room_id` para grandes volúmenes de mensajes.
+- Estrategia de backup y restauración para Postgres.
+
+---
+
+# 9. Observabilidad y Pruebas
+
+## Métricas recomendadas
+- Conexiones WebSocket activas.
+- Mensajes por segundo.
+- Latencia (envío, persistencia, entrega).
+- Errores por tipo.
+
+## Logs
+- Formato JSON estructurado.
+- Incluyen: conexiones, desconexiones, eventos clave, errores de autenticación y fallos en Pub/Sub.
+
+## Tipos de pruebas
+
+### Unitarias
+- Validación de reglas de autorización.
+- Validación de membresías y permisos por sala.
+
+### Integración
+- Flujo completo: WebSocket → BD → Redis → entrega por WebSocket.
+
+### Pruebas de carga
+- Simulación de miles de conexiones concurrentes.
+- Envío masivo de mensajes por sala.
+
+---
+
+# 10. Migraciones, Mantenimiento y Roadmap
+
+## MVP
+- Autenticación JWT.
+- Salas públicas.
+- Mensajes persistidos.
+- Historial paginado (REST).
+- Notificaciones básicas de join/leave.
