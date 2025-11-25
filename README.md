@@ -1,8 +1,8 @@
 # Chat en Tiempo Real — Documento Técnico
 
-Juan Diego Martínez 
-Jacobo Pacheco
-Ricardo Plazas
+> Juan Diego Martínez
+> Jacobo Pacheco
+> Ricardo Plazas
 
 > Para ejecutar:
 > Desde la ruta `chatapp-parcial3/api-gateway` correr:  
