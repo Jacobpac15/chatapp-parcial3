@@ -1,78 +1,93 @@
-# Chat en tiempo real — Documento técnico
+# Chat en Tiempo Real — Documento Técnico
 
-(Para ejecución, correr "docker compose up --build" en la ruta chatapp-parcial3\api-gateway)
+> Para ejecutar:
+> Desde la ruta `chatapp-parcial3/api-gateway` correr:  
+> ```
+> docker compose up --build
+> ```
 
-**Proyecto:** Aplicación de chat en tiempo real con WebSockets
+## Proyecto
+Aplicación de chat en tiempo real con WebSockets.
 
-**Resumen **
-Diseño y documentación de una aplicación de chat en tiempo real que soporta salas públicas y privadas, persistencia de mensajes en base de datos relacional, historial paginable vía REST, notificaciones en tiempo real y control de acceso mediante autenticación JWT y permisos por sala.
+## Resumen
+Diseño y documentación de una aplicación de chat en tiempo real que soporta:
 
-
-## 1. Visión arquitectónica general
-
-### 1.1 Patrones arquitectónicos usados
-
-* **Cliente-Servidor**: clientes webs/móviles se conectan a servidores backend.
-* **Pub-Sub interno**: para propagar eventos entre instancias backend (por ejemplo Redis Pub/Sub o broker ligero)
-* **Repository / Gateway**: separación entre la lógica de mensaje y el acceso a BD.
-* **CQRS (ligero)**: lectura de historial por REST (consulta optimizada) y escritura por WebSocket (ingesta en tiempo real).
-
-### 2.2 Componentes
-
-1. **Clientes**: Web (SPA), móvil (iOS/Android). Mantienen conexión WebSocket para mensajes y suscripciones a salas; consumen REST para historial y gestión.
-2. **API REST (Auth & Management)**: endpoints HTTP para autenticación, gestión de salas, invitaciones, historial paginado.
-3. **Servidor WebSocket (Real-time Gateway)**: acepta conexiones WebSocket; valida JWT; enruta mensajes a salas; publica eventos a los suscriptores locales y remotos.
-4. **Broker interno (Redis Pub/Sub o similar)**: propaga eventos entre varias instancias de servidores WebSocket para entregar mensajes/notifications a todos los clientes conectados.
-5. **Base de datos relacional (Postgres / MySQL)**: persiste usuarios, salas, membresías, mensajes e invitaciones.
-
-### 2.3 Despliegue 
-
-* Desplegar múltiples réplicas del servicio WebSocket+REST detrás de un balanceador que soporte WebSockets
-* Redis (cluster o managed) para Pub/Sub y cache.
-* Postgres como servicio gestionado de base de datos.
+- Salas públicas y privadas  
+- Persistencia de mensajes en base de datos relacional  
+- Historial paginable vía REST  
+- Notificaciones en tiempo real  
+- Control de acceso mediante autenticación JWT y permisos por sala  
 
 ---
 
-## 3. Decisiones arquitectónicas (ADRs)
+# 1. Visión Arquitectónica General
 
-### ADR 001 — Protocolo de transporte
+## 1.1 Patrones Arquitectónicos Usados
 
-* **Contexto:** Requerimos mensajería en tiempo real con baja latencia.
-* **Opciones consideradas:** WebSocket
-* **Decisión:** Usar WebSocket para comunicación bidireccional y soporte de notificaciones en tiempo real.
-* **Consecuencia:** Necesidad de balanceador que soporte WebSocket y manejo de escalado con Pub/Sub.
-
-### ADR 002 — Autenticación
-
-* **Contexto:** Se requiere autenticación simple y compatible con WebSocket.
-* **Opciones:** Sesiones server-side, JWT.
-* **Decisión:** **JWT (signed, short TTL + refresh)**. Token en header `Authorization: Bearer <jwt>` para REST y token en query param o subprotocol/initial message para WebSocket.
-* **Consecuencia:** Servidor valida token en conexión WebSocket y en cada REST request; revocación exige lista de revocación (Redis) o manejo por short TTL.
-
-### ADR 003 — Persistencia de mensajes
-
-* **Contexto:** Mensajes deben ser duraderos y consultables con paginación.
-* **Opciones:** Base relacional gestionada con Postgres.
-* **Decisión:** Postgres por integridad referencial y consultas paginadas sencillas.
-* **Consecuencia:** Diseño de índices adecuados y particionado si escala.
-
-### ADR 004 — Sincronización entre instancias
-
-* **Contexto:** Múltiples instancias WebSocket deben entregar mensajes a clientes conectados en cualquier instancia.
-* **Opciones:** Redis Pub/Sub, message broker (RabbitMQ), usando la BD como polling.
-* **Decisión:** **Redis Pub/Sub** para baja latencia; considerar Redis Streams si se necesitan durabilidad de eventos.
-* **Consecuencia:** Dependencia en Redis; manejo de reconexiones; si se requiere durabilidad usar Streams o broker durable.
-
+- **Cliente-Servidor:** clientes web/móvil se conectan al backend.
+- **Pub-Sub interno:** para propagar eventos entre instancias backend (Redis).
+- **Repository / Gateway:** separación entre lógica y acceso a BD.
+- **CQRS ligero:**  
+  - Escritura en WebSocket  
+  - Lectura vía REST  
 
 ---
 
-## 4. Modelo de datos (esquema relacional — Postgres)
+# 2. Componentes
 
-### Tablas principales (DDL resumido)
+## 2.1 Componentes del Sistema
+
+1. **Clientes:** Web (SPA) y móviles.  
+   Conexión WebSocket para mensajes en tiempo real y REST para historial/gestión.
+
+2. **API REST (Auth & Management):**  
+   Autenticación, salas, invitaciones e historial paginado.
+
+3. **Servidor WebSocket (Real-time Gateway):**  
+   Valida JWT, enruta mensajes a salas, publica eventos.
+
+4. **Broker interno (Redis Pub/Sub):**  
+   Propagación de eventos entre múltiples instancias WebSocket.
+
+5. **Base de datos relacional (Postgres/MySQL):**  
+   Persistencia de usuarios, salas, membresías y mensajes.
+
+## 2.2 Despliegue
+
+- Varias réplicas WebSocket+REST detrás de balanceador compatible con WebSockets.
+- Redis (cluster o managed).
+- Postgres como servicio gestionado.
+
+---
+
+# 3. Decisiones Arquitectónicas (ADRs)
+
+## ADR 001 — Protocolo de Transporte
+- **Decisión:** WebSocket.  
+- **Razón:** Baja latencia y bidireccionalidad.  
+- **Contras:** Requiere balanceador compatible y manejo de escalado/pubsub.
+
+## ADR 002 — Autenticación
+- **Decisión:** JWT (firma, TTL corto + refresh).  
+- **Uso:**  
+  - REST: `Authorization: Bearer <jwt>`  
+  - WS: query param, subprotocol o mensaje inicial  
+
+## ADR 003 — Persistencia
+- **Decisión:** Postgres  
+- **Razón:** Integridad referencial + paginación sencilla
+
+## ADR 004 — Sincronización Entre Instancias
+- **Decisión:** Redis Pub/Sub  
+- **Razón:** Baja latencia y simplicidad
+
+---
+
+# 4. Modelo de Datos (Postgres)
+
+### DDL Resumido
 
 ```sql
---
-
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -95,133 +110,3 @@ CREATE TABLE messages (
     content TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
 );
-```
-
-## 5. APIs (REST) — Diseño y ejemplos
-
-> Todos los endpoints REST requieren HTTPS.
-
-### Autenticación
-
-* `POST /api/v1/auth/login` — body: `{ username, password }` 
-
-### Gestión de usuarios
-
-* `GET /api/v1/u` — obtiene perfil del usuario autenticado.
-
-* `GET /rooms` — obtiene la lista de salas de chat creadas.
-
-**Respuesta ejemplo**
-
-```json
-{
-  {
-        "id": x,
-        "name": "nombre_de_sala_creada",
-        "is_private": true
-    }
-}
-```
-
----
-
-## 6. Protocolo WebSocket y eventos
-
-### Autenticación al conectar
-
-* Cliente abre conexión a `wss://server.example.com/ws?access_token=<jwt>` o envía subprotocol `sec-websocket-protocol` con `Bearer <jwt>` o envía primer mensaje de autenticación.
-* Servidor valida JWT y carga claims (user_id, roles).
-
-### Mensajes de control / formato (JSON)
-
-Usar objeto JSON con campos `{ type: string, roomId?: uuid, payload?: object, id?: string }`.
-
-#### Eventos entrantes (cliente → servidor)
-
-* `join_room` — `{ type: "join_room", roomId: "...", token?: "...", password?: "..." }`.
-* `leave_room` — `{ type: "leave_room", roomId: "..." }`.
-* `message_send` — `{ type: "message_send", roomId: "...", content: "...", metadata?: {...} }`.
-* `typing_start` / `typing_stop` — opcional.
-
-
-
-## 7. Flujos de interacción (secuencias)
-
-### 7.1 Conexión y autenticación WebSocket
-
-1. Cliente obtiene JWT vía `POST /auth/login`.
-2. Cliente abre `wss://.../ws?access_token=JWT`.
-3. Servidor valida JWT; si ok, acepta y marca socket asociado a `user_id`.
-4. Cliente envía `join_room` a las salas deseadas.
-
-### 7.2 Enviar mensaje
-
-1. Cliente envía `message_send` por WebSocket.
-2. Servidor valida que usuario es miembro/habilitado; crea fila en `messages` (INSERT) y obtiene `id`.
-3. Servidor publica evento `room:{roomId}` en Redis Pub/Sub con el payload del mensaje.
-4. Cada instancia suscrita a `room:{roomId}` envía evento `message` a sockets conectados de los miembros.
-5. Servidor emisor contesta `ack` al remitente con `message_id`.
-
----
-
-## 9. Escalado y disponibilidad
-
-* Escalar instancias de servidor WebSocket horizontalmente; usar Redis Pub/Sub para propagar eventos.
-* Mantener sticky sessions no requerido si se usa Pub/Sub correctamente (pero reducirá latencia si cliente mantiene conexión consistente a la misma instancia).
-* Particionado de salas si crece enormemente el número de mensajes/usuarios: decidir por `room_id` hash.
-* Backup de Postgres y plan de restauración.
-
----
-
-## 10. Observabilidad y pruebas
-
-* Métricas: conexiones activas, mensajes/s, latencia persistencia, errores.
-* Logs: eventos importantes (conexiones, desconexiones, reintentos, errores de auth) en formato JSON.
-* Pruebas: tests unitarios para lógica de autorización; tests de integración para flujo WebSocket → persistencia → entrega; pruebas de carga (simular X conexiones y Y msg/s).
-
----
-
-## 11. Migraciones, mantenimiento y roadmap
-
-* Versión inicial (MVP): autenticación JWT, salas públicas, mensajes persistidos, historial paginado, notificaciones join/leave.
-* V1: salas privadas por password/invitación, roles (admin/moderador), edición/borrado de mensajes, reacciones.
-* V2: archivos/attachments, presencia avanzada, estado "escribiendo", delivery/read receipts, offline push notifications.
-
----
-
-## 12. Anexo: ejemplo de endpoint y SQL para paginación (keyset)
-
-**Consulta keyset (Postgres)**
-
-```sql
--- Obtener 50 mensajes antes del id 1000
-SELECT id, user_id, room_id
-FROM messages
-WHERE room_id = $1 AND id < $2
-ORDER BY id DESC
-LIMIT 50;
-```
-
-**Encabezado de la respuesta REST**
-
-* `next_cursor` = id del último registro devuelto (para siguiente petición "before").
-
----
-
-## 13. Riesgos y mitigaciones
-
-* **Pérdida de mensajes en fallos extremos:** usar Redis Streams o un broker duradero si la durabilidad entre inserción y publicación es crítica.
-* **Reordenamiento de mensajes entre instancias:** usar `created_at`/`id` y ordenamiento en cliente si necesario.
-* **Escalado de BD:** archivar mensajes antiguos, particionar por fecha/room.
-
----
-
-## 14. Referencias rápidas (para implementación)
-
-* JWT best practices: firmar tokens, short TTL, refresh tokens seguros.
-* Keyset pagination: evita OFFSET para grandes datasets.
-* Redis Pub/Sub vs Streams: Pub/Sub = baja latencia, sin durabilidad; Streams = con durabilidad y reproducción.
-
-
- 
- 
